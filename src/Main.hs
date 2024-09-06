@@ -6,8 +6,6 @@ module Main where
 
 import Brick
 import Brick.Widgets.Border
-import Brick.Widgets.Border.Style
-import Brick.Widgets.Center
 import qualified Graphics.Vty as V
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
@@ -89,11 +87,36 @@ app = App
     , appAttrMap = const $ attrMap V.defAttr []
     }
 
+createLineGraph :: Int -> Int -> [StockData] -> V.Image
+createLineGraph width height data'
+    | null data' = V.string V.defAttr "No data available"
+    | otherwise = V.vertCat $ map (V.string V.defAttr) graphLines
+  where
+    prices = map close data'
+    minPrice = minimum prices
+    maxPrice = maximum prices
+    priceRange = maxPrice - minPrice
+    
+    scalePrice :: Double -> Int
+    scalePrice price = 
+        round $ (fromIntegral (height - 1)) * (price - minPrice) / priceRange
+    
+    scaledPrices = map scalePrice prices
+    
+    graphLines = [[if shouldDrawPoint x y then '*' else ' ' | x <- [0..width-1]] | y <- [0..height-1]]
+    
+    shouldDrawPoint x y =
+        let dataIndex = x * (length scaledPrices - 1) `div` (width - 1)
+            currentPrice = scaledPrices !! dataIndex
+        in y == (height - 1 - currentPrice)
+
 drawUI :: UIState -> [Widget Name]
 drawUI UIState{..} = [ui]
   where
     ui = borderWithLabel (str "Stock Market Simulator") $ 
             vBox [ drawStockInfo
+                 , hBorder
+                 , drawStockGraph
                  , hBorder
                  , drawPortfolio
                  , hBorder
@@ -105,6 +128,21 @@ drawUI UIState{..} = [ui]
         in vBox
             [ str $ "Day " ++ show (currentDay simState + 1) ++ " - " ++ T.unpack (date day)
             , str $ formatStockData day
+            ]
+    
+    drawStockGraph =
+        let graphWidth = 100
+            graphHeight = 20
+            allData = take (currentDay simState + 1) $ stockData simState
+            dataToShow = 
+                if length allData <= graphWidth
+                then allData
+                else drop (length allData - graphWidth) allData
+            startDate = date $ head dataToShow
+            endDate = date $ last dataToShow
+        in vBox
+            [ str $ "Stock Price (" ++ T.unpack startDate ++ " to " ++ T.unpack endDate ++ ")"
+            , vLimit graphHeight $ hLimit graphWidth $ raw $ createLineGraph graphWidth graphHeight dataToShow
             ]
     
     drawPortfolio = vBox
@@ -145,13 +183,13 @@ handleEvent (VtyEvent (V.EvKey key [])) = do
             result <- liftIO $ atomically $ do
                 cashAmount <- readTVar (cash (simState s))
                 if cashAmount < fromIntegral quantity * close day
-                    then return $ Left "Insufficient funds"
+                    then return $ Left ("Insufficient funds" :: String)
                     else do
                         modifyTVar (cash (simState s)) (\c -> c - fromIntegral quantity * close day)
                         modifyTVar (portfolio (simState s)) (\p -> updatePortfolio p "AAPL" quantity)
                         return $ Right ()
             case result of
-                Left err -> return ()  -- You might want to show an error message here
+                Left _ -> return ()
                 Right _ -> do
                     newState <- liftIO $ updateUIState $ s { uiMode = NormalMode, buyQuantity = "" }
                     put newState
@@ -165,9 +203,9 @@ handleEvent (VtyEvent (V.EvKey key [])) = do
                         modifyTVar (cash (simState s)) (\c -> c + fromIntegral quantity * close day)
                         modifyTVar (portfolio (simState s)) (\p -> updatePortfolio p "AAPL" (-quantity))
                         return $ Right ()
-                    _ -> return $ Left "Insufficient stocks to sell"
+                    _ -> return $ Left ("Insufficient stocks to sell" :: String)
             case result of
-                Left err -> return ()  -- You might want to show an error message here
+                Left _ -> return ()
                 Right _ -> do
                     newState <- liftIO $ updateUIState $ s { uiMode = NormalMode, sellQuantity = "" }
                     put newState
