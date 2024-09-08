@@ -34,9 +34,9 @@ drawUI UIState{..} = [ui]
 drawApiKeyEntry :: String -> Widget Name
 drawApiKeyEntry apiKey = 
     centerLayer $ 
-    borderWithLabel (str "Enter API Key") $ 
+    borderWithLabel (str "Enter Polygon API Key") $ 
     padAll 1 $
-    vBox [ str "Please enter your API key:"
+    vBox [ str "Please enter your Polygon API key:"
          , str apiKey
          ]
 
@@ -140,7 +140,7 @@ fetchStockData s = do
         endDate = "2023-12-31"
     result <- StockData.fetchStockData (stockSymbol s) startDate endDate (apiKey s)
     case result of
-        Left err -> return $ s { errorMessage = Just err }
+        Left err -> return $ s { errorMessage = Just $ "Polygon API Error: " ++ err }
         Right stockData ->
             if null stockData
             then return $ s { errorMessage = Just "No data available for the given stock symbol." }
