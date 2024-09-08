@@ -38,16 +38,19 @@ data SimulationState = SimulationState
     }
 
 data UIState = UIState
-    { simState :: SimulationState
+    { simState :: Maybe SimulationState
     , uiMode :: UIMode
+    , apiKey :: String
+    , stockSymbol :: String
     , buyQuantity :: String
     , sellQuantity :: String
     , portfolioValue :: Double
     , cashAmount :: Double
-    , aapleShares :: Int
+    , stockShares :: Int
+    , errorMessage :: Maybe String
     }
 
-data UIMode = NormalMode | BuyMode | SellMode
+data UIMode = ApiKeyEntry | StockSymbolEntry | NormalMode | BuyMode | SellMode
     deriving (Eq, Show)
 
 data Name = StockList

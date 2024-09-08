@@ -53,54 +53,65 @@ formatStockData StockData{..} =
         (T.unpack date) open high low close volume
 
 handleNextDay :: UIState -> IO UIState
-handleNextDay s = do
-    let newDay = currentDay (simState s) + 1
-    if newDay < length (stockData (simState s))
-        then updateUIState $ s { simState = (simState s) { currentDay = newDay } }
-        else return s  -- TODO handle end of year
+handleNextDay s = case simState s of
+    Nothing -> return s
+    Just sim -> do
+        let newDay = currentDay sim + 1
+        if newDay < length (stockData sim)
+            then updateUIState $ s { simState = Just sim { currentDay = newDay } }
+            else return s -- TODO handle end of year
 
 handleBuy :: UIState -> IO UIState
-handleBuy s = do
-    let quantity = read (buyQuantity s) :: Int
-        day = stockData (simState s) !! currentDay (simState s)
-    result <- atomically $ do
-        cashAmount <- readTVar (cash (simState s))
-        if cashAmount < fromIntegral quantity * close day
-            then return $ Left ("Insufficient funds" :: String)
-            else do
-                modifyTVar (cash (simState s)) (\c -> c - fromIntegral quantity * close day)
-                modifyTVar (portfolio (simState s)) (\p -> updatePortfolio p "AAPL" quantity)
-                return $ Right ()
-    case result of
-        Left _ -> return s
-        Right _ -> updateUIState $ s { uiMode = NormalMode, buyQuantity = "" }
+handleBuy s = case simState s of
+    Nothing -> return s
+    Just sim -> do
+        let quantity = read (buyQuantity s) :: Int
+            day = stockData sim !! currentDay sim
+        result <- atomically $ do
+            cashAmount <- readTVar (cash sim)
+            if cashAmount < fromIntegral quantity * close day
+                then return $ Left ("Insufficient funds" :: String)
+                else do
+                    modifyTVar (cash sim) (\c -> c - fromIntegral quantity * close day)
+                    modifyTVar (portfolio sim) (\p -> updatePortfolio p (stockSymbol s) quantity)
+                    return $ Right ()
+        case result of
+            Left err -> return $ s { errorMessage = Just err }
+            Right _ -> updateUIState $ s { uiMode = NormalMode, buyQuantity = "" }
 
 handleSell :: UIState -> IO UIState
-handleSell s = do
-    let quantity = read (sellQuantity s) :: Int
-        day = stockData (simState s) !! currentDay (simState s)
-    result <- atomically $ do
-        holdings <- readTVar (portfolio (simState s))
-        case find (\(sym, _) -> sym == "AAPL") holdings of
-            Just (_, ownedQuantity) | ownedQuantity >= quantity -> do
-                modifyTVar (cash (simState s)) (\c -> c + fromIntegral quantity * close day)
-                modifyTVar (portfolio (simState s)) (\p -> updatePortfolio p "AAPL" (-quantity))
-                return $ Right ()
-            _ -> return $ Left ("Insufficient stocks to sell" :: String)
-    case result of
-        Left _ -> return s
-        Right _ -> updateUIState $ s { uiMode = NormalMode, sellQuantity = "" }
+handleSell s = case simState s of
+    Nothing -> return s
+    Just sim -> do
+        let quantity = read (sellQuantity s) :: Int
+            day = stockData sim !! currentDay sim
+        result <- atomically $ do
+            holdings <- readTVar (portfolio sim)
+            case find (\(sym, _) -> sym == stockSymbol s) holdings of
+                Just (_, ownedQuantity) | ownedQuantity >= quantity -> do
+                    modifyTVar (cash sim) (\c -> c + fromIntegral quantity * close day)
+                    modifyTVar (portfolio sim) (\p -> updatePortfolio p (stockSymbol s) (-quantity))
+                    return $ Right ()
+                _ -> return $ Left ("Insufficient stocks to sell" :: String)
+        case result of
+            Left err -> return $ s { errorMessage = Just err }
+            Right _ -> updateUIState $ s { uiMode = NormalMode, sellQuantity = "" }
 
 updateUIState :: UIState -> IO UIState
-updateUIState s = do
-    let day = stockData (simState s) !! currentDay (simState s)
-    (portfolioValue, cashAmount, aapleShares) <- atomically $ do
-        holdings <- readTVar (portfolio (simState s))
-        cash <- readTVar (cash (simState s))
-        let aapleShares = sum [qty | (sym, qty) <- holdings, sym == "AAPL"]
-            stockValue = fromIntegral aapleShares * close day
-        return (cash + stockValue, cash, aapleShares)
-    return $ s { portfolioValue = portfolioValue, cashAmount = cashAmount, aapleShares = aapleShares }
+updateUIState s = case simState s of
+    Nothing -> return s
+    Just sim -> do
+        let day = stockData sim !! currentDay sim
+        (portfolioValue, cashAmount, stockShares) <- atomically $ do
+            holdings <- readTVar (portfolio sim)
+            cash <- readTVar (cash sim)
+            let stockShares = sum [qty | (sym, qty) <- holdings, sym == stockSymbol s]
+                stockValue = fromIntegral stockShares * close day
+            return (cash + stockValue, cash, stockShares)
+        return $ s { portfolioValue = portfolioValue
+                   , cashAmount = cashAmount
+                   , stockShares = stockShares 
+                   }
 
 getStockData :: SimulationState -> [StockData]
 getStockData = stockData
