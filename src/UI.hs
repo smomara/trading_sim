@@ -22,6 +22,7 @@ import Control.Monad (void)
 import Control.Concurrent.STM (newTVarIO)
 import Text.Printf (printf)
 import qualified Data.Text as T
+import System.Random (RandomGen, mkStdGen)
 
 drawUI :: UIState -> [Widget Name]
 drawUI UIState{..} = [ui]
@@ -93,7 +94,6 @@ drawPortfolio UIState{..} = vBox
     , str $ "Shares: " ++ show stockShares
     ]
 
-
 drawControls :: UIState -> Widget Name
 drawControls UIState{..} = vBox
     [ str "Controls:"
@@ -107,43 +107,50 @@ drawControls UIState{..} = vBox
         _ -> emptyWidget
     ]
 
-handleEvent :: BrickEvent Name e -> EventM Name UIState ()
+handleEvent :: RandomGen g => BrickEvent Name e -> EventM Name (UIState, g) ()
 handleEvent (VtyEvent (V.EvKey key [])) = do
-    s <- get
+    (s, g) <- get
     case (uiMode s, key) of
         (ApiKeyEntry, V.KEnter) -> 
-            put $ s { uiMode = StockSymbolEntry }
-        (StockSymbolEntry, V.KEnter) -> 
-            liftIO (fetchStockData s) >>= put
-        (NormalMode, V.KChar 'b') -> put $ s { uiMode = BuyMode, buyQuantity = "" }
-        (NormalMode, V.KChar 's') -> put $ s { uiMode = SellMode, sellQuantity = "" }
-        (NormalMode, V.KChar 'n') -> liftIO (Simulation.handleNextDay s) >>= put
+            put (s { uiMode = StockSymbolEntry }, g)
+        (StockSymbolEntry, V.KEnter) -> do
+            (newState, newGen) <- liftIO $ fetchStockData g s
+            put (newState, newGen)
+        (NormalMode, V.KChar 'b') -> put (s { uiMode = BuyMode, buyQuantity = "" }, g)
+        (NormalMode, V.KChar 's') -> put (s { uiMode = SellMode, sellQuantity = "" }, g) 
+        (NormalMode, V.KChar 'n') -> do 
+            (newState, newGen) <- liftIO $ Simulation.handleNextDay g s
+            put (newState, newGen)
         (NormalMode, V.KChar 'q') -> halt
-        (BuyMode, V.KEnter) -> liftIO (Simulation.handleBuy s) >>= put
-        (SellMode, V.KEnter) -> liftIO (Simulation.handleSell s) >>= put
-        (ApiKeyEntry, V.KChar c) -> put $ s { apiKey = apiKey s ++ [c] }
-        (StockSymbolEntry, V.KChar c) -> put $ s { stockSymbol = stockSymbol s ++ [c] }
-        (BuyMode, V.KChar c) -> put $ s { buyQuantity = buyQuantity s ++ [c] }
-        (SellMode, V.KChar c) -> put $ s { sellQuantity = sellQuantity s ++ [c] }
-        (_, V.KBS) -> put $ s { apiKey = drop 1 (apiKey s)
-                              , stockSymbol = drop 1 (stockSymbol s)
-                              , buyQuantity = drop 1 (buyQuantity s)
-                              , sellQuantity = drop 1 (sellQuantity s)
-                              }
-        (_, V.KEsc) -> put $ s { uiMode = NormalMode, buyQuantity = "", sellQuantity = "" }
+        (BuyMode, V.KEnter) -> do
+            newState <- liftIO $ Simulation.handleBuy s
+            put (newState, g)
+        (SellMode, V.KEnter) -> do
+            newState <- liftIO $ Simulation.handleSell s
+            put (newState, g)
+        (ApiKeyEntry, V.KChar c) -> put (s { apiKey = apiKey s ++ [c] }, g)
+        (StockSymbolEntry, V.KChar c) -> put (s { stockSymbol = stockSymbol s ++ [c] }, g)
+        (BuyMode, V.KChar c) -> put (s { buyQuantity = buyQuantity s ++ [c] }, g)
+        (SellMode, V.KChar c) -> put (s { sellQuantity = sellQuantity s ++ [c] }, g)
+        (_, V.KBS) -> put (s { apiKey = drop 1 (apiKey s)
+                             , stockSymbol = drop 1 (stockSymbol s)
+                             , buyQuantity = drop 1 (buyQuantity s)
+                             , sellQuantity = drop 1 (sellQuantity s)
+                             }, g)
+        (_, V.KEsc) -> put (s { uiMode = NormalMode, buyQuantity = "", sellQuantity = "" }, g)
         _ -> return ()
 handleEvent _ = return ()
 
-fetchStockData :: UIState -> IO UIState
-fetchStockData s = do
+fetchStockData :: RandomGen g => g -> UIState -> IO (UIState, g)
+fetchStockData gen s = do
     let startDate = "2023-01-01"
         endDate = "2023-12-31"
     result <- StockData.fetchStockData (stockSymbol s) startDate endDate (apiKey s)
     case result of
-        Left err -> return $ s { errorMessage = Just $ "Polygon API Error: " ++ err }
+        Left err -> return (s { errorMessage = Just $ "Polygon API Error: " ++ err }, gen)
         Right stockData ->
             if null stockData
-            then return $ s { errorMessage = Just "No data available for the given stock symbol." }
+            then return (s { errorMessage = Just "No data available for the given stock symbol." }, gen)
             else do
                 portfolioTVar <- newTVarIO []
                 cashTVar <- newTVarIO 10000.0
@@ -152,8 +159,12 @@ fetchStockData s = do
                         , portfolio = portfolioTVar
                         , cash = cashTVar
                         , stockData = stockData
+                        , intradayPrices = []
                         }
-                Simulation.updateUIState $ s { simState = Just simState, uiMode = NormalMode, errorMessage = Nothing }
+                    (initialIntradayPrices, newGen) = Simulation.generateIntradayPrices gen (open $ head stockData) (close $ head stockData) 100
+                    updatedSimState = simState { intradayPrices = initialIntradayPrices }
+                updatedState <- Simulation.updateUIState $ s { simState = Just updatedSimState, uiMode = NormalMode, errorMessage = Nothing }
+                return (updatedState, newGen)
 
 runUI :: IO ()
 runUI = do
@@ -169,11 +180,12 @@ runUI = do
             , stockShares = 0
             , errorMessage = Nothing
             }
-    void $ defaultMain app initialState
+        initialGen = mkStdGen 42  -- fixed seed for now, use `newStdGen` for randomness
+    void $ defaultMain (app initialGen) (initialState, initialGen)
 
-app :: App UIState e Name
-app = App
-    { appDraw = drawUI
+app :: RandomGen g => g -> App (UIState, g) e Name
+app _ = App
+    { appDraw = drawUI . fst
     , appChooseCursor = neverShowCursor
     , appHandleEvent = handleEvent
     , appStartEvent = return ()

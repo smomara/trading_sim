@@ -35,6 +35,7 @@ data SimulationState = SimulationState
     , portfolio :: TVar [(String, Int)]
     , cash :: TVar Double
     , stockData :: [StockData]
+    , intradayPrices :: [Double]
     }
 
 data UIState = UIState

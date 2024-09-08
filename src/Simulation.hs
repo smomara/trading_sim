@@ -9,14 +9,16 @@ module Simulation
     , updateUIState
     , getStockData
     , getCurrentDay
+    , generateIntradayPrices
     ) where
 
 import Types
 import Control.Concurrent.STM
-import Data.List (find)
+import Data.List (find, scanl')
 import Text.Printf (printf)
 import qualified Graphics.Vty as V
 import qualified Data.Text as T
+import System.Random (RandomGen, random)
 
 createLineGraph :: Int -> Int -> [StockData] -> V.Image
 createLineGraph width height data'
@@ -52,14 +54,22 @@ formatStockData StockData{..} =
     printf "%s | Open: %.2f | High: %.2f | Low: %.2f | Close: %.2f | Volume: %.0f" 
         (T.unpack date) open high low close volume
 
-handleNextDay :: UIState -> IO UIState
-handleNextDay s = case simState s of
-    Nothing -> return s
+handleNextDay :: RandomGen g => g -> UIState -> IO (UIState, g)
+handleNextDay gen s = case simState s of
+    Nothing -> return (s, gen)
     Just sim -> do
         let newDay = currentDay sim + 1
         if newDay < length (stockData sim)
-            then updateUIState $ s { simState = Just sim { currentDay = newDay } }
-            else return s -- TODO handle end of year
+            then do
+                let yesterday = stockData sim !! (newDay - 1)
+                    today = stockData sim !! newDay
+                    yesterdayClose = close yesterday
+                    todayClose = close today
+                    (intradayPrices, newGen) = generateIntradayPrices gen yesterdayClose todayClose 100  -- Generate 100 intraday points
+                    updatedSim = sim { currentDay = newDay, intradayPrices = intradayPrices }
+                updatedState <- updateUIState $ s { simState = Just updatedSim }
+                return (updatedState, newGen)
+            else return (s, gen)  -- End of data reached
 
 handleBuy :: UIState -> IO UIState
 handleBuy s = case simState s of
@@ -118,3 +128,36 @@ getStockData = stockData
 
 getCurrentDay :: SimulationState -> Int
 getCurrentDay = currentDay
+
+-- Generate intraday prices using a random walk
+generateIntradayPrices :: RandomGen g => g -> Double -> Double -> Int -> ([Double], g)
+generateIntradayPrices gen yesterdayClose todayClose numPoints =
+    let
+        totalChange = todayClose - yesterdayClose
+        avgStepSize = totalChange / fromIntegral numPoints
+        (randomWalk, newGen) = genRandomWalk gen (numPoints - 1) avgStepSize
+        cumulativeChanges = scanl' (+) 0 randomWalk
+        scaleFactor = totalChange / (last cumulativeChanges + 1e-10)  -- Avoid division by zero
+        prices = map (\change -> yesterdayClose + change * scaleFactor) (0 : cumulativeChanges)
+    in
+        (prices, newGen)
+
+-- Generate a random walk
+genRandomWalk :: RandomGen g => g -> Int -> Double -> ([Double], g)
+genRandomWalk gen steps avgStepSize = 
+    let
+        (randomNumbers, newGen) = genRandomNumbers gen steps
+        randomWalk = map (\r -> (r - 0.5) * 2 * avgStepSize) randomNumbers
+    in
+        (randomWalk, newGen)
+
+-- Generate a list of random numbers between 0 and 1
+genRandomNumbers :: RandomGen g => g -> Int -> ([Double], g)
+genRandomNumbers gen n =
+    let
+        (value, newGen) = random gen
+        (restValues, finalGen) = genRandomNumbers newGen (n - 1)
+    in
+        if n <= 0
+        then ([], gen)
+        else (value : restValues, finalGen)
