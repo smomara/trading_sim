@@ -4,6 +4,10 @@ version:            0.1.0.0
 
 executable trading-sim
   main-is:          Main.hs
+  other-modules:    Types
+                  , StockData
+                  , UI
+                  , Simulation
   build-depends:    base ^>=4.14.3.0
                   , aeson
                   , bytestring
