@@ -6,20 +6,12 @@ executable trading-sim
   main-is:          Main.hs
   other-modules:    Types
                   , StockData
-                  , UI
                   , Simulation
   build-depends:    base ^>=4.14.3.0
                   , aeson
                   , bytestring
                   , text
-                  , containers
-                  , stm
-                  , random
                   , time
-                  , ansi-terminal
-                  , brick
-                  , vty
-                  , vector
   hs-source-dirs:   src
   default-language: Haskell2010
   extra-libraries:  stock_data

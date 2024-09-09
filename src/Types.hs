@@ -1,57 +1,35 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
-module Types
-    ( StockData(..)
-    , SimulationState(..)
-    , UIState(..)
-    , UIMode(..)
-    , Name(..)
-    ) where
+module Types where
 
 import Data.Text (Text)
-import Control.Concurrent.STM (TVar)
-import Data.Aeson (FromJSON, parseJSON, withObject, (.:))
+import Data.Time (Day)
+import Data.Aeson
+import Control.Monad (mzero)
 
 data StockData = StockData
-    { date :: Text
-    , open :: Double
-    , high :: Double
-    , low :: Double
-    , close :: Double
+    { date   :: Day
+    , open   :: Double
+    , high   :: Double
+    , low    :: Double
+    , close  :: Double
     , volume :: Double
     } deriving (Show)
 
 instance FromJSON StockData where
-    parseJSON = withObject "StockData" $ \v -> StockData
+    parseJSON (Object v) = StockData 
         <$> v .: "date"
         <*> v .: "open"
         <*> v .: "high"
         <*> v .: "low"
         <*> v .: "close"
         <*> v .: "volume"
+    parseJSON _ = mzero
 
 data SimulationState = SimulationState
     { currentDay :: Int
-    , portfolio :: TVar [(String, Int)]
-    , cash :: TVar Double
-    , stockData :: [StockData]
-    }
-
-data UIState = UIState
-    { simState :: Maybe SimulationState
-    , uiMode :: UIMode
-    , apiKey :: String
-    , stockSymbol :: String
-    , buyQuantity :: String
-    , sellQuantity :: String
-    , portfolioValue :: Double
-    , cashAmount :: Double
-    , stockShares :: Int
-    , errorMessage :: Maybe String
-    }
-
-data UIMode = ApiKeyEntry | StockSymbolEntry | NormalMode | BuyMode | SellMode
-    deriving (Eq, Show)
-
-data Name = StockList
-    deriving (Ord, Eq, Show)
+    , cash       :: Double
+    , shares     :: Int
+    , stockData  :: [StockData]
+    } deriving (Show)
